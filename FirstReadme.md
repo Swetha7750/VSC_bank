@@ -1,9 +1,12 @@
 # My first time in GitHub
  Trail for fonts.
  lets go for italic.
+ 
  *italic*
+ 
  Now it has not changes.
  Lets try using the star from beginning till end.
+ 
  *iam trying here*
  **iam trying here for bold**
  'inline code'
