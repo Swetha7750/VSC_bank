@@ -79,41 +79,17 @@ async def disarm_vehicle():
     else:
         print("Failed to disarm vehicle!")
 
-async def set_throttle(throttle_percent):
-    """ Set throttle to a specific percentage """
-    throttle = throttle_percent / 100.0
-    vehicle.mav.set_attitude_target_send(
-        0,  # time_boot_ms
-        vehicle.target_system, vehicle.target_component,
-        0b00000001,  # attitude mask
-        [1, 0, 0, 0],  # quaternion (no rotation)
-        0, 0, 0,  # body rates
-        throttle  # thrust
+async def manual_control_send(throttle, pitch, roll, yaw, buttons=0):
+    """Send manual control inputs to the vehicle."""
+    vehicle.mav.manual_control_send(
+        vehicle.target_system,
+        pitch,  # Pitch: -1000 to 1000 (negative values pitch down, positive values pitch up)
+        roll,   # Roll: -1000 to 1000 (negative values roll left, positive values roll right)
+        throttle,  # Throttle: 0 to 1000 (0 = no throttle, 1000 = full throttle)
+        yaw,    # Yaw: -1000 to 1000 (negative values yaw left, positive values yaw right)
+        buttons  # Buttons: Bitmask for buttons (e.g., 1 = button 1, 1 << 3 = button 4, etc.)
     )
-    print(f"Throttle set to {throttle_percent}%")
-
-async def send_attitude_commands(duration_seconds):
-    """ Send attitude commands for a specified duration """
-    start_time = time.time()
-    while time.time() - start_time < duration_seconds:
-        # Example: Send a pitch command (adjust as needed)
-        pitch_angle = 5  # degrees
-        pitch_rad = math.radians(pitch_angle)
-        quaternion = [
-            math.cos(pitch_rad / 2),
-            math.sin(pitch_rad / 2),
-            0,
-            0
-        ]
-        vehicle.mav.set_attitude_target_send(
-            0,  # time_boot_ms
-            vehicle.target_system, vehicle.target_component,
-            0b00000001,  # attitude mask
-            quaternion,
-            0, 0, 0,  # body rates
-            0.55  # thrust (55%)
-        )
-        await asyncio.sleep(0.1)  # Send commands at 10Hz
+    print(f"Manual control sent: Throttle={throttle}, Pitch={pitch}, Roll={roll}, Yaw={yaw}, Buttons={buttons}")
 
 async def land_vehicle():
     """ Land the vehicle """
@@ -207,21 +183,67 @@ async def main():
 
         # Start streaming frames
         try:
+             # Start streaming frames
             await connection.stream_frames(components=["6d"], on_packet=on_packet)
 
             # Arm the vehicle
             await arm_vehicle()
 
-            # Set throttle to 55%
-            await set_throttle(55)
+            # Send manual control inputs for takeoff
+            start_time = time.time()
+            while time.time() - start_time < 10:  # 10 seconds for takeoff
+                # Gradually increase throttle from 0 to 1000 (neutral)
+                throttle = int(1000 * (time.time() - start_time) / 10)
+                await manual_control_send(
+                    throttle=throttle,  # Increase throttle
+                    pitch=0,            # No pitch
+                    roll=0,             # No roll
+                    yaw=0               # No yaw
+                )
+                await asyncio.sleep(0.1)  # Send commands at 10Hz
 
-            # Send attitude commands for 5 minutes
-            await send_attitude_commands(30)  # 300 seconds = 5 minutes
+            # Maintain altitude for 60 seconds
+            print("Maintaining altitude...")
+            start_time = time.time()
+            while time.time() - start_time < 10:  # 60 seconds
+                await manual_control_send(
+                    throttle=1000,  # Neutral throttle to maintain altitude
+                    pitch=0,        # Maintain level
+                    roll=0,         # No roll
+                    yaw=0           # No yaw
+                )
+                await asyncio.sleep(0.1)  # Send commands at 10Hz
+                print(f"Time elapsed: {time.time() - start_time:.1f} seconds")  # Debugging output
+
+            # Start descending: Gradually decrease throttle over 10 seconds
+            print("Starting descent...")
+            start_time = time.time()
+            while time.time() - start_time < 10:  # 10 seconds for descent
+                # Gradually decrease throttle from 1000 (neutral) to 0
+                throttle = int(1000 * (1 - (time.time() - start_time) / 10))
+                await manual_control_send(
+                    throttle=throttle,  # Decrease throttle
+                    pitch=0,            # Maintain level
+                    roll=0,             # No roll
+                    yaw=0               # No yaw
+                )
+                await asyncio.sleep(0.1)  # Send commands at 10Hz
 
             # Land the vehicle
+            print("Landing...")
             await land_vehicle()
 
+            # Set throttle to zero and wait for the vehicle to stabilize
+            await manual_control_send(throttle=0, pitch=0, roll=0, yaw=0)
+            await asyncio.sleep(1)  # Small delay before disarming
+
+            # Confirm landing
+            while not await is_vehicle_landed():
+                print("Waiting for vehicle to land...")
+                await asyncio.sleep(1)
+
             # Disarm the vehicle
+            print("Disarming vehicle...")
             await disarm_vehicle()
 
         except asyncio.CancelledError:
@@ -239,7 +261,7 @@ def run_until_keyboard_interrupt():
     task = loop.create_task(main())
     try:
         loop.run_until_complete(task)
-    except KeyboardInterrupt:
+    except KeyboardInterrupt:   
         print("KeyboardInterrupt received. Stopping QTM loop...")
         task.cancel()
         loop.run_until_complete(task)
