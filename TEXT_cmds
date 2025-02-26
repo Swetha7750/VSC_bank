@@ -1,0 +1,13 @@
+
+GPSInput.port 25100
+module load GPSInput
+
+
+mavproxy.py --master=/dev/ttyACM2 --baudrate 115200 --out 127.0.0.1:14550
+
+
+master = mavutil.mavlink_connection('udp:127.0.0.1:14550')
+mavproxy.py --out 127.0.0.1:14550 --cmd="module load GPSInput; GPSInput.port 25100;"
+mavproxy.py --out 127.0.0.1:14550 --cmd="module load GPSInput; GPSInput.port 25100;"
+
+disarm force
